@@ -1,77 +1,217 @@
 from PIL import Image
-import base64
-import hashlib
-import os
-# from Crypto.Cipher import AES
-# from Crypto.Random import get_random_bytes
+import math, random
+import numpy as np
+import PySimpleGUI as sg
 
-# pip install pillow
-# pycryptodome required to use AES.
+def getperm(l):
+    seed = sum(sum(a) for a in l)
+    random.seed(seed)
+    perm = list(range(len(l)))
+    random.shuffle(perm)
+    random.seed() # optional, in order to not impact other code based on random
+    return perm
 
+def shuffle(l):
+    perm = getperm(l)
+    return [l[j] for j in perm]
 
-def encrypt(image, key):
-    myimg = image
+def unshuffle(l):
+    perm = getperm(l)
+    res = [None] * len(l)
+    for i, j in enumerate(perm):
+        res[j] = l[i]
+    return res
 
-    for x in range(myimg.width):
-        for y in range(myimg.height):
-            coord = (x, y)
-            pixel = myimg.getpixel(coord) #menghasilkan tuple berisi (r,g,b,a)
+def xor(pixels, key):
+    pix_out     = list()
+    percent     = 0
+    pixels_done = 0
+    pix_total   = len(pixels)
 
-            # Melakukan Prime Component Alteration Technique.
-            # Melakukan looping terhadap isi tuple.
-            # Jika c genap maka c+1, jika ganjil tidak dilakukan operasi apapun.
-            #coprime_pixel = ((c+1 if c % 2 == 0 else c) for c in pixel)
+    for data in pixels:
+        #pixels_done += 1
+        #percent = round((pixels_done/pix_total) * 100)
+        
+        da = tuple((p ^ key) for p in data)
+        pix_out.append(da)
 
-            #myimg.putpixel(coord, tuple(int(c**43 % 256)for c in coprime_pixel))
+        #print("Processing image... "+ str(percent) + "%", end='\r')
 
-            da = tuple((p ^ key) for p in pixel)
-            myimg.putpixel(coord, da)
+    print("\nDone!\n")
 
-    return myimg
+    return pix_out
 
+def encrypt(pixels, key):
+    pixels = shuffle(pixels)
+    pixels = xor(pixels, key)
 
-def decrypt(image, key):
-    myimg = image
+    return pixels
 
-    for x in range(myimg.width):
-        for y in range(myimg.height):
-            coord = (x, y)
-            pixel = myimg.getpixel(coord) #menghasilkan tuple berisi (r,g,b,a)
+def decrypt(pixels, key):
+    pixels = xor(pixels, key)
+    pixels = unshuffle(pixels)
 
-            da = tuple((p ^ key) for p in pixel)
-            myimg.putpixel(coord, da)
+    return pixels
 
-            #myimg.putpixel(coord, tuple(int(c**3 % 256) for c in pixel))
+def generate_img(img_mode, w, h, contents, filename):
+    print("Creating image in " +img_mode+" mode...")
+    img = Image.new(img_mode, (w, h))
 
-    return myimg
+    print("Appending image contents...")
+    img.putdata(contents)
+
+    print("Saving image...")
+    img.save(filename)
+
+    print("Output filename: "+ filename)
+
+    sg.popup("File has been processed.")
+
+def demo():
+    key = 253 #max 254
+
+    print("Opening image...")
+
+    im              = Image.open("sample2.png")
+    img_mode        = im.mode #Image mode (RGB/RGBA)
+    width, height   = im.size
+    pixels          = list(im.getdata())
+    filetype        = im.format.lower()
+    filename_out    = "enc" + "." + filetype
+
+    encrypted_data  = encrypt(pixels, key)
+
+    generate_img(img_mode, width, height, encrypted_data, filename_out)
+
+    #-----
+
+    im              = Image.open(filename_out)
+    img_mode        = im.mode #Image mode (RGB/RGBA)
+    width, height   = im.size
+    pixels          = list(im.getdata())
+    filetype        = im.format.lower()
+    filename_out    = "dec" + "." + filetype
+    
+    decrypted_data  = decrypt(pixels, key)
+
+    generate_img(img_mode, width, height, decrypted_data, filename_out)
+
+def chooser_dialog():
+    layout = [
+          [sg.Radio('Encrypt image', "RADIO1", default=True, key="mode")],
+          [sg.Radio('Decrypt image', "RADIO1", default=False)],
+          [sg.Button('Select')]
+    ]
+
+    window = sg.Window('Please select mode', layout)
+
+    while True:
+        event, values = window.read()
+
+        if event == sg.WIN_CLOSED or event=="Exit":
+            break
+        else:
+            mode = ""
+
+            if(values['mode'] == True):
+                mode = "encrypt"
+            else:
+                mode = "decrypt"
+
+            window.close()
+            return mode
+    
+    window.close()
+
+def browse_file():
+    filename = ""
+
+    filename = sg.popup_get_file("Masukkan gambar yang ingin diproses.", 
+    file_types = (
+        ('PNG File', '*.png'),
+        ('JPG File', '*.jpg'),
+    ),)
+
+    return filename
+
+def enter_key():
+    value = 0
+    
+    layout = [[sg.Text('Enter number for password (1-255): '), sg.Input(enable_events=True,  key='_INPUT_')],
+          [sg.OK()] ]
+
+    window = sg.Window('Enter password', layout)
+
+    while True:
+        event, values = window.Read()
+
+        if event in (None, 'Exit'):
+            break
+        elif event in ("OK"):
+            if value not in range(1, 254):
+                sg.popup_ok("Please enter number 1-254")
+            else:
+                break
+
+        if len(values['_INPUT_']) and values['_INPUT_'][-1] not in ('0123456789'):  # if last char entered not a digit
+            window.Element('_INPUT_').Update(values['_INPUT_'][:-1])                # delete last char from input
+        else:
+            value = int(values['_INPUT_'] or "0")
+
+    window.Close()
+    return value
+
+def do_encrypt(filename, key):
+    sg.popup("Click 'OK' to encrypt image. Please wait until next dialog are shown.")
+
+    im              = Image.open(filename)
+    img_mode        = im.mode #Image mode (RGB/RGBA)
+    width, height   = im.size
+    pixels          = list(im.getdata())
+    filetype        = im.format.lower()
+    filename_out    = filename + "_enc" + "." + filetype
+
+    encrypted_data  = encrypt(pixels, key)
+
+    generate_img(img_mode, width, height, encrypted_data, filename_out)
+
+def do_decrypt(filename, key):
+    sg.popup("Click 'OK' to decrypt image. Please wait until next dialog are shown.")
+
+    im              = Image.open(filename)
+    img_mode        = im.mode #Image mode (RGB/RGBA)
+    width, height   = im.size
+    pixels          = list(im.getdata())
+    filetype        = im.format.lower()
+    filename_out    = filename + "_dec" + "." + filetype
+
+    data            = decrypt(pixels, key)
+
+    generate_img(img_mode, width, height, data, filename_out)
 
 def main():
-    print("Pengamanan PNG versi 1.6")
+    mode = chooser_dialog()
+    print(mode + " selected!")
 
-    im = Image.open("sample.png")
+    filename = browse_file()
 
-    # password = sistemmultimedia
-    passkey = "c39d849dabfe3301af378c4dcf3486ce"
-    xorkey  = 150
+    if not filename:
+        value = sg.popup_yes_no("Filename is empty.\nWish to back to mode dialog?")
 
-    print("Mengenkripsi gambar...")
-    lim = encrypt(im, xorkey)
-    lim.save("encrypted.png")
+        if(value==
+        "Yes"):
+            main()
+        else:
+            return
 
-    password = input("Enter first key (to open data): ")
+    print("Filename: "+filename)
 
-    if hashlib.md5(password.encode()).hexdigest() == passkey:
-        print("Password correct! image decrypted")
+    xorkey = enter_key()
 
-        mkey = int(input("Enter second key (to descramble color): "))
-
-        lim = decrypt(im, mkey)
-        lim.save("decrypted.png")
-    else:
-        print("Password incorrect! image encrypted")
-        lim = encrypt(im, xorkey)
-        lim.save("encrypted.png")
-
+    if(mode=="encrypt"):
+        do_encrypt(filename, xorkey)
+    elif(mode=="decrypt"):
+        do_decrypt(filename, xorkey)
 
 if __name__ == "__main__":
     main()
